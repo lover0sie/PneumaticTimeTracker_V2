@@ -82,6 +82,48 @@
         width: 100%;
       }
     }
+
+    /* Loading overlay */
+    #loadingOverlay{
+      display:none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.35);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 16px;
+    }
+
+    #loadingOverlay.show{
+      display: flex;
+    }
+
+    #loadingOverlay .loadingBox{
+      width: 100%;
+      max-width: 360px;
+      background: #fff;
+      border-radius: 14px;
+      padding: 16px;
+      text-align: center;
+      box-shadow: 0 10px 24px rgba(0,0,0,.12);
+    }
+
+    .spinner{
+      width: 44px;
+      height: 44px;
+      border: 5px solid #e5e7eb;
+      border-top-color: #111827;
+      border-radius: 50%;
+      margin: 0 auto 10px;
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin{
+      to { transform: rotate(360deg); }
+    }
+
   </style>
 </head>
 
@@ -246,6 +288,16 @@
     </div>
   </div>
 
+  <!-- Loading Overlay -->
+  <div id="loadingOverlay">
+    <div class="loadingBox">
+      <div class="spinner"></div>
+      <div id="loadingText">Submitting…</div>
+      <div class="small" style="margin-top:6px; color:#6b7280;">Please wait</div>
+    </div>
+  </div>
+
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import {
@@ -379,6 +431,26 @@
 
       return { version, empId, empName, station };
     }
+
+    function setButtonsDisabled(disabled) {
+      el("btnStart").disabled = disabled;
+      el("btnPass").disabled = disabled;
+      el("btnLeak").disabled = disabled;
+    }
+
+    function showLoading(text = "Submitting…") {
+      el("loadingText").textContent = text;
+      el("loadingOverlay").classList.add("show");
+    }
+
+    function hideLoading() {
+      el("loadingOverlay").classList.remove("show");
+    }
+
+    function wait(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
 
     /***************
      * UI PAINT
@@ -650,17 +722,16 @@
       el("stopTsText").textContent = "-";
     }
 
-    async function finalizeTestAsPass() {
+    async function finalizeTestAsPass(remark) {
       const endISO = new Date().toISOString();
       const dur = diffSeconds(startTestingISO, endISO);
-      const remark = prompt("Optional remark for PASS (leave blank if none):", "") ?? "";
       const ref = segmentDocRef(projectData.serial, currentTestSegmentId);
 
       await updateDoc(ref, {
         end_time: endISO,
         duration_sec: dur,
         status: "passed",
-        remark: remark.trim() ? remark.trim() : null,
+        remark: remark ? remark : null,
         lastUpdatedAt: serverTimestamp()
       });
 
@@ -812,19 +883,22 @@
      * TIMER PAGE BUTTONS
      ***************/
     el("btnStart").addEventListener("click", async () => {
-      try {
-        if (!(projectConfirmed && employeeConfirmed)) return;
-        if (isRunning) return;
+      if (!(projectConfirmed && employeeConfirmed)) return;
+      if (isRunning) return;
 
+      //  Lock immediately (prevents double-click / weird state)
+      isRunning = true;
+      el("btnStart").disabled = true;   // optional extra lock
+      canEnableTimerActions();
+
+      // Start timer UI immediately (better UX)`
+      elapsedSec = 0;
+      renderTimer();
+      startTimer();
+
+      try {
         // Create TEST segment start + auto-close any open leak for same serial
         await createTestSegmentStart();
-
-        // Start UI timer
-        isRunning = true;
-        elapsedSec = 0;
-        renderTimer();
-        startTimer();
-        canEnableTimerActions();
 
         // persist running state so you can recover if refresh
         localStorage.setItem(LS.startEpoch, String(Date.now()));
@@ -833,8 +907,15 @@
 
         setStatus(el("actionStatus"), "Testing started.", "ok");
       } catch (e) {
+        // ❌ If Firestore fails, rollback UI + state
         console.error(e);
-        setStatus(el("actionStatus"), "Start failed. Check Firestore rules / indexes.", "error");
+
+        stopTimer();
+        isRunning = false;
+        canEnableTimerActions();
+        el("btnStart").disabled = false;
+
+        setStatus(el("actionStatus"), `Start failed: ${e?.message || e}`, "error");
       }
     });
 
@@ -842,51 +923,100 @@
       try {
         if (!isRunning || !currentTestSegmentId) return;
 
+        // Pause timer while asking remark
         isRunning = false;
         stopTimer();
         canEnableTimerActions();
 
-        await finalizeTestAsPass();
+        const remarkInput = prompt("Optional remark:", "");
 
-        setStatus(el("actionStatus"), "PASS saved. Returning to scan.", "ok");
+        // Cancel and return to stopwatch
+        if (remarkInput === null) {
+          isRunning = true;
+          startTimer();
+          canEnableTimerActions();
+          setStatus(el("actionStatus"), "PASS cancelled. Returned to stopwatch.", "ok");
+          return;
+        }
 
-        // done: clear and restart at step 1
+        // Lock buttons + show loading
+        setButtonsDisabled(true);
+        showLoading("Submitting PASS…");
+
+        const remark = remarkInput.trim();
+        await finalizeTestAsPass(remark);
+
+        setStatus(el("actionStatus"), "Submitted test status. Returning to home page…", "ok");
+
+        // Small polish delay
+        await wait(1200);
+
+        hideLoading();
         clearAllState();
-        location.reload();
+        location.reload(); // or initAlwaysStartAtPage1()
+
       } catch (e) {
         console.error(e);
-        setStatus(el("actionStatus"), "PASS failed. Check Firestore rules.", "error");
+
+        hideLoading();
+        setButtonsDisabled(false);
+
+        // Rollback to running state if something failed
+        isRunning = true;
+        startTimer();
+        canEnableTimerActions();
+
+        setStatus(el("actionStatus"), `PASS failed: ${e?.message || e}`, "error");
       }
     });
+
+
 
     el("btnLeak").addEventListener("click", async () => {
       try {
         if (!isRunning || !currentTestSegmentId) return;
 
-        // Stop UI timer first
+        // Stop UI timer while filling leak details
         isRunning = false;
         stopTimer();
         canEnableTimerActions();
 
         const ok = await finalizeTestAsLeakAndOpenLeakSegment();
         if (!ok) {
-          // user cancelled -> resume timer (optional)
+          // user cancelled leak → resume stopwatch
           isRunning = true;
           startTimer();
           canEnableTimerActions();
-          setStatus(el("actionStatus"), "Leak cancelled. Testing resumed.", "ok");
+          setStatus(el("actionStatus"), "LEAK cancelled. Returned to stopwatch.", "ok");
           return;
         }
 
-        setStatus(el("actionStatus"), "LEAK saved.Returning to scan.", "ok");
+        // Lock buttons + show loading
+        setButtonsDisabled(true);
+        showLoading("Submitting LEAK…");
 
+        setStatus(el("actionStatus"), "Submitted test status. Returning to home page…", "ok");
+        await wait(1200);
+
+        hideLoading();
         clearAllState();
         location.reload();
+
       } catch (e) {
         console.error(e);
-        setStatus(el("actionStatus"), "LEAK failed. Check Firestore rules / indexes.", "error");
+
+        hideLoading();
+        setButtonsDisabled(false);
+
+        // Rollback to running state if error
+        isRunning = true;
+        startTimer();
+        canEnableTimerActions();
+
+        setStatus(el("actionStatus"), `LEAK failed: ${e?.message || e}`, "error");
       }
     });
+
 
     /***************
      * INIT / RESUME
