@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pneumatic Timeline Dashboard</title>
+
+  <style>
+    :root{
+      --bg:#f6f7fb; --card:#fff; --line:#e5e7eb; --text:#111827; --muted:#6b7280;
+      --red:#dc2626; --green:#16a34a; --blue:#2563eb; --gray:#9ca3af;
+    }
+
+    body{ font-family: Arial, sans-serif; margin:0; padding:16px; background:var(--bg); color:var(--text); font-size: 12px; }
+    .wrap{ max-width: 1200px; margin:0 auto; }
+    h2{ margin:0 0 12px; }
+
+    .card{
+      background:var(--card);
+      border-radius:14px;
+      padding:14px;
+      box-shadow:0 8px 20px rgba(0,0,0,.06);
+      margin-bottom:12px;
+    }
+
+    .rowbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    button, select{
+      padding:10px 12px; font-size:14px; border-radius:10px; border:1px solid #d9dbe3;
+      background:#274f90; color:#fff; cursor:pointer;
+    }
+    button:disabled{ background:#9aa3b2; cursor:not-allowed; }
+    .btn-ghost{ background:#fff; color:#274f90; border:1px solid #274f90; }
+
+    .status{ margin-top:8px; font-size:12px; }
+    .ok{ color:#16a34a; } .error{ color:#b91c1c; }
+    .small{ font-size:12px; color:var(--muted); }
+
+    /* TABLE LAYOUT */
+    .table{
+      border:1px solid var(--line);
+      border-radius:12px;
+      overflow:hidden;
+      background:#fff;
+    }
+
+    .thead, .trow{
+      display:grid;
+      grid-template-columns: 240px 150px 160px 130px 1fr 120px;
+      align-items:center;
+    }
+
+    .thead{
+      background:#f3f4f6;
+      font-weight:700;
+      font-size:12px;
+      border-bottom:1px solid var(--line);
+      position:sticky;
+      top:0;
+      z-index:5;
+    }
+    .thead > div, .trow > div{
+      padding:10px 12px;
+      border-right:1px solid var(--line);
+    }
+    .thead > div:last-child, .trow > div:last-child{ border-right:none; }
+
+    /* Add stronger row separator */
+    .trow{
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .trow > div{ padding-top: 14px; padding-bottom: 14px; }
+    .trow:last-child{ border-bottom:none; }
+
+    /* Timeline cell: give space for labels under bar */
+    .trow > div:nth-child(5){
+      padding-bottom: 28px;
+    }
+
+    /* Scroll container for rows */
+    .tbody{
+      max-height: calc(100vh - 240px);
+      overflow-y:auto;
+    }
+
+    /* Timeline bar */
+    .barWrap{
+      position:relative;
+      height:34px;
+      background:#f9fafb;
+      border:1px solid #e5e7eb;
+      border-radius:10px;
+      overflow: visible; /* allow outside labels */
+    }
+
+    /* Only show MIN/MAX labels under bar */
+    .barMinMax{
+      position:absolute;
+      left:0;
+      right:0;
+      top: 100%;
+      margin-top: 6px;
+      font-size:11px;
+      color: var(--muted);
+      pointer-events:none;
+    }
+
+    .barMinMax .min{ position:absolute; left:0; transform: translateX(0); }
+    .barMinMax .max{ position:absolute; right:0; transform: translateX(0); }
+
+    /* Custom tooltip (instead of native title) */
+    .tooltip{
+      position: fixed;          /* stays near mouse */
+      z-index: 99999;
+      max-width: 320px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+      box-shadow: 0 10px 24px rgba(0,0,0,.18);
+      pointer-events: none;
+      white-space: pre-line;
+      display: none;
+    }
+
+    .tooltip.pass{ background:#14532d; }   /* dark green */
+    .tooltip.leak{ background:#7f1d1d; }   /* maroon */
+    .tooltip.ongoing{ background:#1e3a8a; }/* dark blue */
+    .tooltip.unknown{ background:#374151; }/* dark gray */
+
+
+
+    .barTicks{
+      position:absolute;
+      left:0;
+      right:0;
+      top: 100%;        /* below the bar */
+      margin-top: 6px;
+
+      height: 16px;
+      pointer-events:none;
+      font-size:11px;
+      color:var(--muted);
+
+      /* IMPORTANT: remove flex */
+      display:block;
+    }
+
+    .barTicks span{
+      position:absolute;              /* each label placed by JS */
+      transform: translateX(-50%);    /* center on the tick */
+      white-space:nowrap;
+    }
+
+    .seg{
+      position:absolute;
+      top:0; bottom:0;
+      border-radius:8px;
+      opacity:0.95;
+    }
+    .seg.pass{ background:var(--green); }
+    .seg.leak{ background:var(--red); }
+    .seg.ongoing{ background:var(--blue); }
+    .seg.unknown{ background:var(--gray); }
+
+    .seg:hover{ outline:2px solid rgba(17,24,39,.35); }
+
+    /* Bottom axis */
+    .axisCard{
+      position:sticky;
+      bottom:0;
+      z-index:6;
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:10px 12px;
+      box-shadow:0 -6px 18px rgba(0,0,0,.06);
+      margin-top:12px;
+    }
+
+    .axis{
+      position:relative;
+      height:38px;
+      background:#fff;
+    }
+    .tick{
+      position:absolute;
+      top:0;
+      width:1px;
+      height:16px;
+      background:#d1d5db;
+    }
+    .tickLabel{
+      position:absolute;
+      top:18px;
+      transform: translateX(-50%);
+      font-size:11px;
+      color:var(--muted);
+      white-space:nowrap;
+    }
+
+    .mono{ font-family: ui-monospace, Menlo, Consolas, "Liberation Mono", monospace; }
+    .badge{
+      display:inline-block;
+      padding:2px 8px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:700;
+      border:1px solid #e5e7eb;
+      background:#fff;
+    }
+    .badge.pass{ color:var(--green); border-color:rgba(22,163,74,.35); }
+    .badge.leak{ color:var(--red); border-color:rgba(220,38,38,.35); }
+    .badge.ongoing{ color:var(--blue); border-color:rgba(37,99,235,.35); }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h2>Pneumatic Timeline Dashboard</h2>
+
+    <div class="card">
+      <div class="rowbar">
+        <button id="btnReload">Reload</button>
+        <input id="dateInput" type="date" style="padding:10px 12px; font-size:14px; border-radius:10px; border:1px solid #d9dbe3;" />
+      </div>
+      <div class="small" style="margin-top:6px;">
+        Choose the date to see the project list.
+      </div>
+      <div class="status ok" id="pageStatus">Loading…</div>
+    </div>
+
+    <div class="card table">
+      <div class="thead">
+        <div>Project</div>
+        <div>Serial Number</div>
+        <div>Type</div>
+        <div>Status</div>
+        <div>Timeline</div>
+        <div>CSV</div>
+      </div>
+      <div class="tbody" id="tbody"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+    import {
+      getFirestore, collection, getDocs, query, orderBy
+    } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDnYqCLkMfk3WrUZWqT6HM72hxKdsu7y_A",
+      authDomain: "pneumatictracking.firebaseapp.com",
+      projectId: "pneumatictracking",
+      storageBucket: "pneumatictracking.firebasestorage.app",
+      messagingSenderId: "392460221400",
+      appId: "1:392460221400:web:605da9e55bebd7200210ad"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const el = (id) => document.getElementById(id);
+    const statusEl = el("pageStatus");
+    const tbody = el("tbody");
+    const tip = el("tooltip");
+
+    function getTipClass(seg){
+      // match your segment colors
+      if (seg.segment_type === "LEAK") return "leak";
+      if (seg.segment_type === "TEST" && seg.status === "passed") return "pass";
+      if (seg.segment_type === "TEST" && !seg.end_time) return "ongoing";
+      return "unknown";
+    }
+
+    function showTooltip(evt, seg, start, end){
+      const cls = getTipClass(seg);
+      tip.className = `tooltip ${cls}`;
+      tip.textContent = buildTooltip(seg, start, end);
+      tip.style.display = "block";
+      moveTooltip(evt);
+    }
+
+    function moveTooltip(evt){
+      const pad = 14;
+      const x = evt.clientX + pad;
+      const y = evt.clientY + pad;
+
+      // keep inside viewport (simple clamp)
+      const maxX = window.innerWidth - 340;
+      const maxY = window.innerHeight - 180;
+
+      tip.style.left = Math.min(x, maxX) + "px";
+      tip.style.top  = Math.min(y, maxY) + "px";
+    }
+
+    function hideTooltip(){
+      tip.style.display = "none";
+    }
+
+
+    function setStatus(msg, kind="ok"){
+      statusEl.className = "status " + (kind === "error" ? "error" : "ok");
+      statusEl.textContent = msg;
+    }
+
+    // ---- time helpers ----
+    function pad2(n){ return String(n).padStart(2,"0"); }
+    function toDate(iso){ return new Date(iso); }
+
+    function fmtDate(d){
+      return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()}`;
+    }
+
+    function fmtTime(d){
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+    }
+
+    function safe(s){
+      return String(s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+    }
+
+    function roundDownTo30Min(ms){
+      const step = 30*60*1000;
+      return Math.floor(ms/step)*step;
+    }
+    function roundUpTo30Min(ms){
+      const step = 30*60*1000;
+      return Math.ceil(ms/step)*step;
+    }
+
+    function durationMin(start, end){
+      return Math.max(0, Math.round((end.getTime()-start.getTime())/60000));
+    }
+
+    function getSegClass(seg){
+      // LEAK red, PASS green, ongoing blue
+      if (seg.segment_type === "LEAK") return "leak";
+      if (seg.segment_type === "TEST") {
+        if (seg.status === "passed") return "pass";
+        if (!seg.end_time) return "ongoing";
+        if (seg.status === "leak") return "leak";
+      }
+      return "unknown";
+    }
+
+    function getRowStatus(segments){
+      // show LEAK if there is open leak; else last segment label
+      const openLeak = segments
+        .filter(s => s.segment_type === "LEAK" && !s.end_time)
+        .sort((a,b) => toDate(b.start_time)-toDate(a.start_time))[0];
+
+      if (openLeak) return { text: "LEAK", cls: "leak" };
+
+      const last = [...segments].sort((a,b) => toDate(b.start_time)-toDate(a.start_time))[0];
+      if (!last) return { text: "-", cls: "unknown" };
+
+      if (last.segment_type === "TEST" && last.status === "passed") return { text:"PASS", cls:"pass" };
+      if (last.segment_type === "TEST" && !last.end_time) return { text:"TESTING", cls:"ongoing" };
+      if (last.segment_type === "LEAK") return { text:"LEAK", cls:"leak" };
+      if (last.status === "leak") return { text:"LEAK", cls:"leak" };
+      return { text: (last.status || last.segment_type || "-").toUpperCase(), cls:"unknown" };
+    }
+
+    function buildTooltip(seg, start, end){
+      const hasEnd = !!seg.end_time;
+
+      const dateText = fmtDate(start); // if you want end date too, tell me
+      const timeText = hasEnd
+        ? `${fmtTime(start)} - ${fmtTime(end)}`
+        : `${fmtTime(start)} - NOW`;
+
+      const mins = durationMin(start, end);
+
+      const empName = seg.employee_name || "-";
+      const empId = seg.employee_id || "-";
+      const employeeText = `${empName} (${empId})`;
+
+      // Your data fields
+      const reason = seg.reason || seg.leak_reason || "-";   // depends which you stored
+      const remark = seg.remark || "-";
+
+      // LEAK tooltip
+      if (seg.segment_type === "LEAK") {
+        return [
+          `Date: ${dateText}`,
+          `Time: ${timeText}`,
+          `Duration: ${mins} min`,
+          `Employee: ${employeeText}`,
+          `Reason: ${safe(reason)}`,
+          `Remark: ${safe(remark)}`
+        ].join("\n");
+      }
+
+      // TEST tooltip (PASS / TESTING / leak-ended test)
+      return [
+        `Date: ${dateText}`,
+        `Time: ${timeText}`,
+        `Duration: ${mins} min`,
+        `Employee: ${employeeText}`,
+        `Remark: ${safe(remark)}`
+      ].join("\n");
+    }
+
+
+
+    // ---- CSV export ----
+    function csvEscape(v){
+      const s = String(v ?? "");
+      const needs = /[",\n]/.test(s);
+      const esc = s.replace(/"/g,'""');
+      return needs ? `"${esc}"` : esc;
+    }
+
+    function segmentsToCsv(serial, segments){
+      const header = [
+        "serial_number","segment_id","segment_type","status",
+        "start_time","end_time","duration_sec",
+        "project_name","vessel_type",
+        "employee_id","employee_name","station",
+        "remark"
+      ];
+      const lines = [header.join(",")];
+
+      for (const s of segments){
+        const row = [
+          serial,
+          s.id ?? "",
+          s.segment_type ?? "",
+          s.status ?? "",
+          s.start_time ?? "",
+          s.end_time ?? "",
+          s.duration_sec ?? "",
+          s.project_name ?? "",
+          s.vessel_type ?? "",
+          s.employee_id ?? "",
+          s.employee_name ?? "",
+          s.station ?? "",
+          s.remark ?? ""
+        ].map(csvEscape);
+        lines.push(row.join(","));
+      }
+      return lines.join("\n");
+    }
+
+    function downloadTextFile(filename, text){
+      const blob = new Blob([text], { type:"text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    // ---- data load ----
+    async function loadAllSerials() {
+      // lists all serial docs under serial_timelines
+      const snap = await getDocs(collection(db, "serial_timelines"));
+      return snap.docs.map(d => ({ serial: d.id, ...d.data() }));
+    }
+
+    async function loadSegments(serial) {
+      const col = collection(db, "serial_timelines", serial, "segments");
+      const q = query(col, orderBy("start_time", "asc"));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+
+    function filterByRange(segments, rangeVal){
+      if (rangeVal === "all") return segments;
+      const days = parseInt(rangeVal, 10);
+      const cutoff = Date.now() - days*24*60*60*1000;
+
+      return segments.filter(s => {
+        const start = toDate(s.start_time).getTime();
+        const end = s.end_time ? toDate(s.end_time).getTime() : Date.now();
+        return end >= cutoff;
+      });
+    }
+
+    function computeGlobalWindow(rows){
+      // rows: [{segments:[]}, ...]
+      let min = null, max = null;
+      const now = new Date();
+
+      for (const r of rows){
+        for (const s of r.segments){
+          const st = toDate(s.start_time);
+          const en = s.end_time ? toDate(s.end_time) : now;
+          const a = st.getTime(), b = en.getTime();
+          if (min === null || a < min) min = a;
+          if (max === null || b > max) max = b;
+        }
+      }
+      if (min === null || max === null){
+        const t = Date.now();
+        min = t - 2*60*60*1000;
+        max = t;
+      }
+
+      min = roundDownTo30Min(min);
+      max = roundUpTo30Min(max);
+
+      // avoid zero width
+      if (max <= min) max = min + 30*60*1000;
+      return { min, max };
+    }
+
+    function renderTable(rows, window){
+      tbody.innerHTML = "";
+
+      const {min, max} = window;
+      const span = max - min;
+      const now = new Date();
+
+      for (const r of rows){
+        const tr = document.createElement("div");
+        tr.className = "trow";
+
+        const project = r.project_name || "-";
+        const serial = r.serial;
+        const type = r.vessel_type || "-";
+
+        const status = getRowStatus(r.segments);
+
+        // columns
+        const c1 = document.createElement("div"); c1.textContent = project;
+        const c2 = document.createElement("div"); c2.textContent = serial; c2.className="mono";
+        const c3 = document.createElement("div"); c3.textContent = type;
+        const c4 = document.createElement("div");
+        c4.innerHTML = `<span class="badge ${status.cls}">${status.text}</span>`;
+
+        const c5 = document.createElement("div");
+        const bar = document.createElement("div");
+        bar.className = "barWrap";
+
+        // segments as bars
+        for (const s of r.segments){
+          const st = toDate(s.start_time);
+          const en = s.end_time ? toDate(s.end_time) : now;
+          const a = st.getTime(), b = en.getTime();
+
+          // clamp to window
+          const leftMs = Math.max(a, min);
+          const rightMs = Math.min(b, max);
+          if (rightMs <= leftMs) continue;
+
+          const leftPct = ((leftMs - min)/span)*100;
+          const widthPct = ((rightMs - leftMs)/span)*100;
+
+          const segDiv = document.createElement("div");
+          segDiv.className = `seg ${getSegClass(s)}`;
+          segDiv.style.left = leftPct + "%";
+          segDiv.style.width = widthPct + "%";
+
+          // tooltip
+          segDiv.addEventListener("mouseenter", (evt) => showTooltip(evt, s, st, en));
+          segDiv.addEventListener("mousemove", (evt) => moveTooltip(evt));
+          segDiv.addEventListener("mouseleave", hideTooltip);
+
+
+          bar.appendChild(segDiv);
+        }
+
+        renderBarMinMax(bar, window);
+
+
+        c5.appendChild(bar);
+
+        const c6 = document.createElement("div");
+        const btn = document.createElement("button");
+        btn.className = "btn-ghost";
+        btn.textContent = "Export";
+        btn.addEventListener("click", () => {
+          const csv = segmentsToCsv(serial, r.segments);
+          downloadTextFile(`segments_${serial}.csv`, csv);
+        });
+        c6.appendChild(btn);
+
+        tr.appendChild(c1);
+        tr.appendChild(c2);
+        tr.appendChild(c3);
+        tr.appendChild(c4);
+        tr.appendChild(c5);
+        tr.appendChild(c6);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    function sortRowsLatestFirst(rows){
+      // sort by latest segment end/start (latest on top)
+      const now = new Date();
+
+      const getLatestTime = (segments) => {
+        if (!segments.length) return 0;
+        const last = [...segments].sort((a,b) => toDate(b.start_time)-toDate(a.start_time))[0];
+        const end = last.end_time ? toDate(last.end_time) : now;
+        return end.getTime();
+      };
+
+      rows.sort((a,b) => getLatestTime(b.segments) - getLatestTime(a.segments));
+      return rows;
+    }
+
+    function dayStartEndFromDateInput(dateStr){ // "2026-02-04"
+    const [y,m,d] = dateStr.split("-").map(Number);
+
+    // Fixed working window: 08:00 -> 17:30
+    const start = new Date(y, m-1, d, 8, 0, 0, 0);
+    const end   = new Date(y, m-1, d, 17, 30, 0, 0);
+
+    return { start, end };
+  }
+
+
+    function filterBySelectedDate(segments, dateStr){
+      if (!dateStr) return segments;
+      const { start, end } = dayStartEndFromDateInput(dateStr);
+      const startMs = start.getTime();
+      const endMs = end.getTime();
+
+      return segments.filter(s => {
+        const st = toDate(s.start_time).getTime();
+        const en = s.end_time ? toDate(s.end_time).getTime() : Date.now();
+
+        // keep if segment overlaps the date window
+        return en > startMs && st < endMs;
+      });
+    }
+
+
+    el("dateInput").value = new Date().toISOString().slice(0,10);
+    el("dateInput").addEventListener("change", reload);
+
+
+    async function reload(){
+      const dateStr = el("dateInput").value; // YYYY-MM-DD
+
+      setStatus("Loading serial list…", "ok");
+      tbody.innerHTML = "";
+
+      try {
+        const serialDocs = await loadAllSerials();
+        if (!serialDocs.length){
+          setStatus("No serial timelines found in Firestore.", "error");
+          return;
+        }
+
+        setStatus(`Loading segments for ${serialDocs.length} serial(s)…`, "ok");
+
+        // Load each serial's segments (parallel but controlled)
+        const rows = [];
+        for (const s of serialDocs){
+          const segsAll = await loadSegments(s.serial);
+          const segs = filterBySelectedDate(segsAll, dateStr);
+
+          if (!segs.length) continue;
+
+          // Use values from segments (consistent)
+          const any = segs[0];
+          rows.push({
+            serial: s.serial,
+            project_name: any.project_name || s.project_name || "-",
+            vessel_type: any.vessel_type || s.vessel_type || "-",
+            segments: segs
+          });
+        }
+
+        if (!rows.length){
+          setStatus(`Loaded ${rows.length} row(s) for ${dateStr}. Latest at top.`, "ok");
+          return;
+        }
+
+        sortRowsLatestFirst(rows);
+
+        const { start, end } = dayStartEndFromDateInput(dateStr);
+        const window = { min: start.getTime(), max: end.getTime() };
+
+
+        renderTable(rows, window);
+
+        setStatus(`Loaded ${rows.length} row(s). Latest at top.`, "ok");
+      } catch (e){
+        console.error(e);
+        setStatus("Failed to load dashboard. Check Firestore rules / internet.", "error");
+      }
+    }
+
+    function fmtMinMaxLabel(d){
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+
+    function renderBarMinMax(barEl, window){
+      // remove old
+      barEl.querySelectorAll(".barMinMax").forEach(x => x.remove());
+
+      const div = document.createElement("div");
+      div.className = "barMinMax";
+
+      const minSpan = document.createElement("span");
+      minSpan.className = "min";
+      minSpan.textContent = fmtMinMaxLabel(new Date(window.min));
+
+      const maxSpan = document.createElement("span");
+      maxSpan.className = "max";
+      maxSpan.textContent = fmtMinMaxLabel(new Date(window.max));
+
+      div.appendChild(minSpan);
+      div.appendChild(maxSpan);
+      barEl.appendChild(div);
+    }
+
+
+
+
+    el("btnReload").addEventListener("click", reload);
+
+    // initial load
+    reload();
+  </script>
+
+  <div id="tooltip" class="tooltip"></div>
+
+</body>
+</html>
