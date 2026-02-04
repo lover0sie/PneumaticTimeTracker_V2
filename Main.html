@@ -21,6 +21,9 @@
     .btn-secondary { background:#274f90; }
     .btn-passed { background:#08820a; }
     .btn-warn { background:#d60c09; }
+    .btn-stop { background: #7f1d1d; }
+    .btn-stop:hover {background: #991b1b}
+    
     .small { font-size: 12px; color:#6b7280; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .time { font-size: 46px; text-align:center; padding: 10px 0; letter-spacing: 2px; }
@@ -124,6 +127,19 @@
       to { transform: rotate(360deg); }
     }
 
+    .center-image {
+      display: flex;
+      justify-content: center;
+      margin: 12px 0;
+    }
+
+    .center-image img {
+      max-width: 160px;     /* control size */
+      width: 100%;
+      height: auto;
+    }
+
+
   </style>
 </head>
 
@@ -147,14 +163,10 @@
       <div class="divider"></div>
 
       <div class="row">
-        <button id="btnStartProjectScan" class="btn-secondary">Start Scan</button>
-        <button id="btnStopProjectScan" class="btn-secondary" disabled>Stop Scan</button>
+        <button id="btnProjectScanToggle" class="btn-secondary">Start Scan</button>
       </div>
 
       <div style="height:10px"></div>
-
-      <input id="projectImageInput" type="file" accept="image/*" />
-      <div class="small hint"><i>Upload QR image if camera scan can’t read.</i></div>
 
       <div class="divider"></div>
 
@@ -173,10 +185,6 @@
         <button id="btnOkProject" disabled>OK</button>
       </div>
 
-      <!-- Hidden scanner target (upload only) -->
-      <div id="hiddenProjectScanner" style="display:none;"></div>
-    </div>
-
     <!-- PAGE 2 -->
     <div class="page card" id="page2">
       <div class="pill">Scan Employee QR</div>
@@ -187,14 +195,10 @@
       <div class="divider"></div>
 
       <div class="row">
-        <button id="btnStartEmpScan" class="btn-secondary">Start Scan</button>
-        <button id="btnStopEmpScan" class="btn-secondary" disabled>Stop Scan</button>
+        <button id="btnEmpScanToggle" class="btn-secondary">Start Scan</button>
       </div>
 
       <div style="height:10px"></div>
-
-      <input id="empImageInput" type="file" accept="image/*" />
-      <div class="small hint"><i>Upload QR image if camera scan can’t read.</i></div>
 
       <div class="divider"></div>
 
@@ -212,10 +216,6 @@
         <button id="btnOkEmployee" disabled>OK</button>
       </div>
 
-      <!-- Hidden scanner target (upload only) -->
-      <div id="hiddenEmployeeScanner" style="display:none;"></div>
-    </div>
-
     <!-- PAGE 3 -->
     <div class="page card" id="page3">
       <div class="pill">Timer</div>
@@ -227,6 +227,13 @@
         <div><b>Type:</b> <span class="mono" id="p3Type">-</span></div>
         <div><b>Employee:</b> <span class="mono" id="p3Emp">-</span></div>
         <div><b>Station:</b> <span class="mono" id="p3Station">-</span></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Center image -->
+      <div class="center-image">
+        <img src="images/Vessel-1.jpeg" alt="Pneumatic Test" />
       </div>
 
       <div class="divider"></div>
@@ -319,6 +326,16 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
+    async function upsertSerialHeader(serial, projectName, vesselType) {
+      const ref = doc(db, "serial_timelines", serial);
+      await setDoc(ref, {
+        serial_number: serial,
+        project_name: projectName,
+        vessel_type: vesselType,
+        lastUpdatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
     /***************
      * STORAGE KEYS (resume if refresh mid-test)
      ***************/
@@ -398,6 +415,9 @@
       const b = new Date(isoEnd).getTime();
       return Math.max(0, Math.round((b - a) / 1000));
     }
+
+    
+
 
     /***************
      * PARSERS
@@ -506,132 +526,144 @@
      ***************/
     const projectScanner = new Html5Qrcode("projectReader");
     const employeeScanner = new Html5Qrcode("employeeReader");
-    const projectImageScanner = new Html5Qrcode("hiddenProjectScanner");
-    const employeeImageScanner = new Html5Qrcode("hiddenEmployeeScanner");
 
-    async function startProjectScan() {
-      setStatus(el("projectScanStatus"), "Starting camera...", "ok");
-      el("btnStartProjectScan").disabled = true;
-      el("btnStopProjectScan").disabled = false;
+    let projectScanning = false;
 
-      await projectScanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        async (decodedText) => {
-          const parsed = parseProjectQR(decodedText);
-          if (!parsed) {
-            setStatus(el("projectScanStatus"), "Invalid Vessel QR Code. Please scan the correct QR Code.", "error");
-            el("btnOkProject").disabled = true;
-            return;
-          }
-          projectData = parsed;
-          projectConfirmed = false;
-          paintProjectUI();
-          setStatus(el("projectScanStatus"), "Vessel QR Code parsed. Press OK to confirm.", "ok");
-          el("btnOkProject").disabled = false;
-          persistWizardState();
-          await stopProjectScan();
-        },
-        () => {}
-      );
-    }
+    async function toggleProjectScan() {
+      const btn = el("btnProjectScanToggle");
 
-    async function stopProjectScan() {
-      try { await projectScanner.stop(); } catch {}
-      el("btnStartProjectScan").disabled = false;
-      el("btnStopProjectScan").disabled = true;
-    }
+      // STOP scanning
+      if (projectScanning) {
+        try { await projectScanner.stop(); } catch {}
+        projectScanning = false;
 
-    async function startEmpScan() {
-      setStatus(el("empScanStatus"), "Starting camera...", "ok");
-      el("btnStartEmpScan").disabled = true;
-      el("btnStopEmpScan").disabled = false;
+        btn.textContent = "Start Scan";
+        btn.classList.remove("btn-stop");
+        btn.classList.add("btn-secondary");
 
-      await employeeScanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        async (decodedText) => {
-          const parsed = parseEmployeeQR(decodedText);
-          if (!parsed) {
-            setStatus(el("empScanStatus"), "Invalid Employee QR Code. Please scan the correct QR Code.", "error");
-            el("btnOkEmployee").disabled = true;
-            return;
-          }
-          employeeData = parsed;
-          employeeConfirmed = false;
-          paintEmployeeUI();
-          setStatus(el("empScanStatus"), "Employee QR Code parsed. Press OK to confirm.", "ok");
-          el("btnOkEmployee").disabled = false;
-          persistWizardState();
-          await stopEmpScan();
-        },
-        () => {}
-      );
-    }
+        setStatus(el("projectScanStatus"), "Scan stopped.", "ok");
+        return;
+      }
 
-    async function stopEmpScan() {
-      try { await employeeScanner.stop(); } catch {}
-      el("btnStartEmpScan").disabled = false;
-      el("btnStopEmpScan").disabled = true;
-    }
-
-    async function scanProjectFromImage(file) {
+      // START scanning
       try {
-        await stopProjectScan();
-        const decodedText = await projectImageScanner.scanFile(file, true);
-        const parsed = parseProjectQR(decodedText);
-        if (!parsed) {
-          setStatus(el("projectScanStatus"), "Could not parse Vessel QR from image. Please check image clarity and QR code format.", "error");
-          el("btnOkProject").disabled = true;
-          return;
-        }
-        projectData = parsed;
-        projectConfirmed = false;
-        paintProjectUI();
-        setStatus(el("projectScanStatus"), "Vessel QR parsed from image. Press OK to confirm.", "ok");
-        el("btnOkProject").disabled = false;
-        persistWizardState();
+        setStatus(el("projectScanStatus"), "Starting camera...", "ok");
+        btn.disabled = true;
+
+        await projectScanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          async (decodedText) => {
+            const parsed = parseProjectQR(decodedText);
+            if (!parsed) {
+              setStatus(el("projectScanStatus"), "Invalid Vessel QR.", "error");
+              return;
+            }
+
+            projectData = parsed;
+            projectConfirmed = false;
+            paintProjectUI();
+            setStatus(el("projectScanStatus"), "Vessel QR parsed. Press OK.", "ok");
+            el("btnOkProject").disabled = false;
+
+            // Auto stop after success
+            await projectScanner.stop();
+            projectScanning = false;
+
+            btn.textContent = "Start Scan";
+            btn.classList.remove("btn-stop");
+            btn.classList.add("btn-secondary");
+          }
+        );
+
+        projectScanning = true;
+        btn.textContent = "Stop Scan";
+        btn.classList.remove("btn-secondary");
+        btn.classList.add("btn-stop");
+
       } catch (e) {
         console.error(e);
-        setStatus(el("projectScanStatus"), "Failed to read QR from image. Try a clearer photo.", "error");
-        el("btnOkProject").disabled = true;
+        setStatus(el("projectScanStatus"), "Camera start failed.", "error");
+        projectScanning = false;
+
+        btn.textContent = "Start Scan";
+        btn.classList.remove("btn-stop");
+        btn.classList.add("btn-secondary");
+      } finally {
+        btn.disabled = false;
       }
     }
 
-    async function scanEmployeeFromImage(file) {
+
+    el("btnProjectScanToggle").addEventListener("click", toggleProjectScan);
+
+    let empScanning = false;
+
+    async function toggleEmpScan() {
+      const btn = el("btnEmpScanToggle");
+
+      if (empScanning) {
+        try { await employeeScanner.stop(); } catch {}
+        empScanning = false;
+
+        btn.textContent = "Start Scan";
+        btn.classList.remove("btn-stop");
+        btn.classList.add("btn-secondary");
+
+        setStatus(el("empScanStatus"), "Scan stopped.", "ok");
+        return;
+      }
+
       try {
-        await stopEmpScan();
-        const decodedText = await employeeImageScanner.scanFile(file, true);
-        const parsed = parseEmployeeQR(decodedText);
-        if (!parsed) {
-          setStatus(el("empScanStatus"), "Could not parse Employee QR from image. Please check image clarity and QR code format.", "error");
-          el("btnOkEmployee").disabled = true;
-          return;
-        }
-        employeeData = parsed;
-        employeeConfirmed = false;
-        paintEmployeeUI();
-        setStatus(el("empScanStatus"), "Employee QR parsed from image. Press OK to confirm.", "ok");
-        el("btnOkEmployee").disabled = false;
-        persistWizardState();
+        setStatus(el("empScanStatus"), "Starting camera...", "ok");
+        btn.disabled = true;
+
+        await employeeScanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          async (decodedText) => {
+            const parsed = parseEmployeeQR(decodedText);
+            if (!parsed) {
+              setStatus(el("empScanStatus"), "Invalid Employee QR.", "error");
+              return;
+            }
+
+            employeeData = parsed;
+            employeeConfirmed = false;
+            paintEmployeeUI();
+            setStatus(el("empScanStatus"), "Employee QR parsed. Press OK.", "ok");
+            el("btnOkEmployee").disabled = false;
+
+            await employeeScanner.stop();
+            empScanning = false;
+
+            btn.textContent = "Start Scan";
+            btn.classList.remove("btn-stop");
+            btn.classList.add("btn-secondary");
+          }
+        );
+
+        empScanning = true;
+        btn.textContent = "Stop Scan";
+        btn.classList.remove("btn-secondary");
+        btn.classList.add("btn-stop");
+
       } catch (e) {
         console.error(e);
-        setStatus(el("empScanStatus"), "Failed to read QR from image. Try a clearer photo.", "error");
-        el("btnOkEmployee").disabled = true;
+        setStatus(el("empScanStatus"), "Camera start failed.", "error");
+        empScanning = false;
+
+        btn.textContent = "Start Scan";
+        btn.classList.remove("btn-stop");
+        btn.classList.add("btn-secondary");
+      } finally {
+        btn.disabled = false;
       }
     }
 
-    el("projectImageInput").addEventListener("change", (ev) => {
-      const file = ev.target.files?.[0];
-      if (file) scanProjectFromImage(file);
-      ev.target.value = "";
-    });
 
-    el("empImageInput").addEventListener("change", (ev) => {
-      const file = ev.target.files?.[0];
-      if (file) scanEmployeeFromImage(file);
-      ev.target.value = "";
-    });
+    el("btnEmpScanToggle").addEventListener("click", toggleEmpScan);
+
 
     el("leakReason").addEventListener("change", () => {
       const show = el("leakReason").value === "others";
@@ -716,11 +748,20 @@
         lastUpdatedAt: serverTimestamp()
       });
 
+      await upsertSerialHeader(
+        projectData.serial,
+        projectData.projectName,
+        projectData.type
+      );
+
       currentTestSegmentId = seg.id;
       el("segmentIdText").textContent = currentTestSegmentId;
       el("startTsText").textContent = startTestingISO;
       el("stopTsText").textContent = "-";
     }
+
+      
+
 
     async function finalizeTestAsPass(remark) {
       const endISO = new Date().toISOString();
@@ -854,11 +895,6 @@
     /***************
      * WIZARD BUTTONS
      ***************/
-    el("btnStartProjectScan").addEventListener("click", startProjectScan);
-    el("btnStopProjectScan").addEventListener("click", stopProjectScan);
-
-    el("btnStartEmpScan").addEventListener("click", startEmpScan);
-    el("btnStopEmpScan").addEventListener("click", stopEmpScan);
 
     el("btnOkProject").addEventListener("click", () => {
       projectConfirmed = true;
@@ -1123,8 +1159,6 @@
     setStatus(el("empScanStatus"), "Ready to scan employee QR.", "ok");
     setStatus(el("actionStatus"), "", "ok");
   }
-
-    
 
 
     // Attach scans
