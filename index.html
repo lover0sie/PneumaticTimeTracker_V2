@@ -37,13 +37,21 @@
 
       <div style="height:10px"></div>
 
-      <div class="divider"></div>
+      <div class="kv">
+        <label for="manpower"><b>Manpower:</b></label>
+        <input id="manpower" type="number" min="1" step="1" placeholder="e.g. 2" />
+        <small class="hint"><i>Enter manpower before pressing OK.</i></small>
+      </div>
+      
 
+      <div class="divider"></div>
       <div class="kv">
         <div><b>Employee ID:</b> <span class="mono" id="empIdText">-</span></div>
         <div><b>Name:</b> <span class="mono" id="empNameText">-</span></div>
         <div><b>Station:</b> <span class="mono" id="empStationText">-</span></div>
       </div>
+
+    
 
       <div class="status" id="empScanStatus"></div>
 
@@ -102,6 +110,7 @@
         <div><b>Type:</b> <span class="mono" id="p3Type">-</span></div>
         <div><b>Employee:</b> <span class="mono" id="p3Emp">-</span></div>
         <div><b>Station:</b> <span class="mono" id="p3Station">-</span></div>
+        <div><b>Manpower:</b> <span class="mono" id="p3Manpower">-</span></div>
       </div>
 
       <div class="divider"></div>

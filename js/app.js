@@ -63,6 +63,25 @@ function formatHHMMSS(totalSec) {
   return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
 }
 
+
+/* ============================================================================
+3) Manpower
+============================================================================*/
+
+function getManpowerValue() {
+  const raw = document.getElementById("manpower")?.value ?? "";
+  const n = Number(raw);
+
+  // allow empty = null (or force required by returning error)
+  if (raw === "") return null;
+
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    throw new Error("Manpower must be a whole number (1, 2, 3, ...)");
+  }
+  return n;
+}
+
+
 /* ============================================================================
   4) UI: steps/pages switching
 
@@ -97,7 +116,8 @@ const LS = {
   projectData: "ptt_projectData",
   employeeData: "ptt_employeeData",
   confirmedProject: "ptt_confirmedProject",
-  confirmedEmployee: "ptt_confirmedEmployee"
+  confirmedEmployee: "ptt_confirmedEmployee",
+  manpower: "ptt_manpower"
 };
 
 function clearAllState() {
@@ -108,7 +128,7 @@ function clearAllState() {
   6) State in memory (current session)
 ============================================================================ */
 let projectData = { version:"", projectName:"", serial:"", type:"" };
-let employeeData = { version:"", empId:"", empName:"", station:"" };
+let employeeData = { version:"", empId:"", empName:"", station:"", manpower: null };
 let projectConfirmed = false;
 let employeeConfirmed = false;
 
@@ -267,6 +287,7 @@ function paintPage3Header() {
   el("p3Type").textContent = projectData.type || "-";
   el("p3Emp").textContent = employeeData.empId ? `${employeeData.empName} (${employeeData.empId})` : "-";
   el("p3Station").textContent = employeeData.station || "-";
+  el("p3Manpower").textContent = (employeeData.manpower ?? "-");
 }
 
 /* ============================================================================
@@ -285,6 +306,8 @@ function persistWizardState() {
   localStorage.setItem(LS.employeeData, JSON.stringify(employeeData));
   localStorage.setItem(LS.confirmedProject, projectConfirmed ? "1" : "0");
   localStorage.setItem(LS.confirmedEmployee, employeeConfirmed ? "1" : "0");
+  //Added manpower as local storage
+  localStorage.setItem(LS.manpower, employeeData.manpower == null ? "" : String(employeeData.manpower)); 
 }
 
 
@@ -304,6 +327,7 @@ function diffSeconds(isoStart, isoEnd) {
   const b = new Date(isoEnd).getTime();
   return Math.max(0, Math.round((b - a) / 1000));
 }
+
 
 /* Upsert header document for each serial (project_name, vessel_type, etc.) */
 async function upsertSerialHeader(serial, projectName, vesselType) {
@@ -351,7 +375,7 @@ async function createTestSegmentStart() {
 
   const col = segmentsColRef(projectData.serial);
 
-  const seg = await addDoc(col, {
+    const seg = await addDoc(col, {
     segment_type: "TEST",
     start_time: startTestingISO,
     end_time: null,
@@ -367,6 +391,8 @@ async function createTestSegmentStart() {
     employee_id: employeeData.empId,
     employee_name: employeeData.empName,
     station: employeeData.station,
+
+    manpower: employeeData.manpower ?? null, // add manpower
 
     remark: null,
 
@@ -645,6 +671,22 @@ el("btnEmpScanToggle").addEventListener("click", toggleEmpScan);
 
 // Step 1 (Employee) -> Step 2 (Vessel)
 el("btnOkEmployee").addEventListener("click", () => {
+  //  validate manpower here
+  let manpower = null;
+  try {
+    manpower = getManpowerValue();
+  } catch (err) {
+    alert(err.message);
+    return;
+  }
+
+  if (manpower == null) {
+    alert("Please enter manpower before pressing OK.");
+    return;
+  }
+
+  employeeData.manpower = manpower;
+
   employeeConfirmed = true;
   el("btnOkEmployee").disabled = true;
 
@@ -821,7 +863,6 @@ function goToCorrectStepIfNotRunning(){
 
 
 function loadWizardStateFromStorage(){
-  // Restores scanned data so the Timer page shows correct Serial/Project/Employee.
   try {
     const p = localStorage.getItem(LS.projectData);
     const e = localStorage.getItem(LS.employeeData);
@@ -831,10 +872,12 @@ function loadWizardStateFromStorage(){
     console.warn("Failed to parse saved wizard state:", err);
   }
 
+  //  restore manpower input UI
+  if (el("manpower")) el("manpower").value = employeeData.manpower ?? "";
+
   projectConfirmed = localStorage.getItem(LS.confirmedProject) === "1";
   employeeConfirmed = localStorage.getItem(LS.confirmedEmployee) === "1";
 
-  // Update UI fields
   paintProjectUI();
   paintEmployeeUI();
 }
