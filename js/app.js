@@ -314,6 +314,22 @@ function persistWizardState() {
 /* ============================================================================
   13) Firestore helpers
 ============================================================================ */
+async function isSerialAlreadyRunning(serial) {
+  const col = segmentsColRef(serial);
+
+  const q = query(
+    col,
+    where("segment_type", "==", "TEST"),
+    where("end_time", "==", null),
+    orderBy("start_time", "desc"),
+    limit(1)
+  );
+
+  const snap = await getDocs(q);
+  return !snap.empty;
+}
+
+
 function segmentsColRef(serial) {
   return collection(db, "serial_timelines", serial, "segments");
 }
@@ -717,6 +733,25 @@ el("btnOkProject").addEventListener("click", () => {
 el("btnStart").addEventListener("click", async () => {
   if (!(projectConfirmed && employeeConfirmed)) return;
   if (isRunning) return;
+
+  //  Block starting if this serial already has a running TEST
+  try {
+    const alreadyRunning = await withTimeout(
+      isSerialAlreadyRunning(projectData.serial),
+      8000
+    );
+
+    if (alreadyRunning) {
+      alert(`Project ${projectData.serial} is already running by another device/operator.`);
+      setStatus(el("actionStatus"), "Blocked: this project already has a running TEST.", "error");
+      return;
+    }
+  } catch (e) {
+    // If the check fails (network), don't start to avoid duplicates
+    alert(`Unable to verify running state. Please try again.\n${e?.message || e}`);
+    setStatus(el("actionStatus"), `Start blocked: ${e?.message || e}`, "error");
+    return;
+  }
 
   // Lock state first
   isRunning = true;
